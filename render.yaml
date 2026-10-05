@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: penyli-beyond-realms
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn PENYLI_BEYOND_REALMS_v10_0_MVP_SERVER:app
+    healthCheckPath: /health
+    envVars:
+      - key: PENYLI_ENV
+        value: production
+      - key: PENYLI_ALLOWED_ORIGINS
+        sync: false
+      - key: PENYLI_DB
+        value: penyli_production.db
+      - key: PENYLI_SIGNING_KEY_PATH
+        value: /tmp/penyli_ed25519_private.pem
+      - key: PENYLI_SIGNING_KEY_ID
+        value: PENYLI-ROOT-2026-V1
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: BASE_URL
+        sync: false

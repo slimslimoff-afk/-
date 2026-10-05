@@ -1,0 +1,24 @@
+{
+  "version": "10.0",
+  "stage": "MVP",
+  "base": "v9.5 PRODUCTION DEPLOYMENT",
+  "commercial_price_usd": 1.0,
+  "flow": [
+    "PAYMENT",
+    "CREATION",
+    "GENE",
+    "REALM",
+    "STATE",
+    "HISTORY",
+    "REPLAY",
+    "GENOME",
+    "IDENTITY",
+    "SIGNATURE",
+    "PUBLIC_VERIFICATION",
+    "CERTIFICATE"
+  ],
+  "readiness_endpoint": "/api/mvp/readiness",
+  "status_endpoint": "/api/mvp/status",
+  "visible_ui_changes": false,
+  "duplicate_ids": 0
+}

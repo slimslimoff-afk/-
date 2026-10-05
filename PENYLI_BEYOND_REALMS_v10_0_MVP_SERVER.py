@@ -19,7 +19,7 @@ import os, sqlite3, uuid, hashlib, json, base64
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, send_file
 from dotenv import load_dotenv
 import stripe
 
@@ -27,10 +27,11 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH']=64*1024
-stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
-WEBHOOK_SECRET = os.environ["STRIPE_WEBHOOK_SECRET"]
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:4242")
-DB = os.environ.get("PENYLI_DB", "penyli_payment_v84.db")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+stripe.api_key = STRIPE_SECRET_KEY or None
+WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+BASE_URL = os.environ.get("BASE_URL", "")
+DB = os.environ.get("PENYLI_DB", "penyli_production.db")
 AMOUNT_CENTS = 100
 CURRENCY = "usd"
 
@@ -155,7 +156,15 @@ def now():
 
 
 
+PRODUCTION = os.environ.get("PENYLI_ENV","production").lower()=="production"
+SIGNING_KEY_PATH = os.environ.get("PENYLI_SIGNING_KEY_PATH", "penyli_ed25519_private.pem")
+SIGNING_KEY_ID = os.environ.get("PENYLI_SIGNING_KEY_ID", "PENYLI-ROOT-2026-V1")
+
 ALLOWED_ORIGINS={x.strip() for x in os.environ.get("PENYLI_ALLOWED_ORIGINS","").split(",") if x.strip()}
+
+@app.get("/")
+def index():
+    return send_file(os.path.join(os.path.dirname(__file__), "PENYLI_BEYOND_REALMS_v10_0_MVP.html"))
 
 
 
@@ -229,6 +238,8 @@ def add_security_headers(response):
 
 @app.get("/api/payment/create")
 def create_payment():
+    if not STRIPE_SECRET_KEY or not BASE_URL:
+        return jsonify({"error":"PAYMENT_NOT_CONFIGURED"}), 503
     client_request_id = request.args.get("client_request_id") or str(uuid.uuid4())
 
     con = db()
@@ -289,6 +300,8 @@ def create_payment():
 
 @app.post("/api/payment/webhook")
 def webhook():
+    if not WEBHOOK_SECRET:
+        return jsonify({"error":"WEBHOOK_NOT_CONFIGURED"}), 503
     payload = request.data
     signature = request.headers.get("Stripe-Signature", "")
 
@@ -908,6 +921,8 @@ def success():
 def cancel():
     return redirect("/")
 
+# Initialize the SQLite schema when the process is imported by Gunicorn.
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT","10000")), debug=False)

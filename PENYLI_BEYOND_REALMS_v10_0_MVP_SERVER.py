@@ -19,7 +19,7 @@ import os, sqlite3, uuid, hashlib, json, base64
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from datetime import datetime, timezone
-from flask import Flask, request, jsonify, redirect, send_file
+from flask import Flask, request, jsonify, redirect, send_file, Response
 from dotenv import load_dotenv
 import stripe
 
@@ -164,7 +164,45 @@ ALLOWED_ORIGINS={x.strip() for x in os.environ.get("PENYLI_ALLOWED_ORIGINS","").
 
 @app.get("/")
 def index():
-    return send_file(os.path.join(os.path.dirname(__file__), "PENYLI_BEYOND_REALMS_v10_0_MVP.html"))
+    # v10.1 mobile consolidation: use the same v10.0 product markup on every screen.
+    # The legacy image-only mobile artwork remains in the HTML for compatibility, but is hidden
+    # on small screens so users never see the obsolete v2.x mobile presentation.
+    path = os.path.join(os.path.dirname(__file__), "PENYLI_BEYOND_REALMS_v10_0_MVP.html")
+    with open(path, "r", encoding="utf-8") as fh:
+        html = fh.read()
+    mobile_css = """<style id="penyli-v10-1-mobile-consolidation">
+@media (max-width:600px){
+  .mobile-art{display:none !important}
+  .desktop{display:block !important}
+  .desk-page{width:100%;overflow:hidden}
+  .hero{min-height:0 !important;height:auto !important;overflow:hidden}
+  .hero-bg{position:absolute !important;inset:0 !important;width:100% !important;height:100% !important;object-fit:cover !important;object-position:center 38% !important}
+  .desk-content{min-height:0 !important;height:auto !important;padding:14px 14px 92px !important;max-width:none !important}
+  .topbar{gap:8px !important;align-items:center !important}
+  .topbar .brand{margin-left:-10px !important;min-width:0 !important;max-width:58% !important}
+  .topbar .brand .approved-logo{flex-basis:180px !important;width:180px !important;min-width:180px !important;max-width:180px !important}
+  .live{padding:8px 10px !important;font-size:10px !important;white-space:nowrap !important;letter-spacing:.04em !important}
+  .dot{width:8px !important;height:8px !important}
+  .hero-copy{margin:180px 0 18px !important}
+  .hero-copy h1{font-size:clamp(42px,13vw,64px) !important;line-height:.92 !important}
+  .hero-copy p{font-size:16px !important;letter-spacing:.24em !important;margin:14px 0 20px !important}
+  .cta{width:100% !important;justify-content:center !important;padding:12px 16px !important;gap:12px !important;font-size:17px !important}
+  .cta .arrow{width:38px !important;height:38px !important;font-size:24px !important;flex:0 0 38px !important}
+  .flow{grid-template-columns:repeat(5,minmax(0,1fr)) !important;gap:3px !important;padding:10px 5px !important;border-radius:16px !important}
+  .ico{width:42px !important;height:42px !important;font-size:18px !important}
+  .stage b{font-size:8px !important;letter-spacing:.03em !important}
+  .stage small{font-size:7px !important;line-height:1.15 !important}
+  .platform-btn{width:100% !important;margin-top:10px !important;padding:11px 8px !important;font-size:11px !important}
+  .payment{flex-direction:row !important;gap:12px !important;margin-top:12px !important;padding:14px !important;border-radius:18px !important}
+  .dollar{font-size:40px !important;flex:0 0 auto !important}
+  .paytitle{font-size:16px !important;line-height:1.1 !important}
+  .paytext{font-size:10px !important;line-height:1.35 !important}
+  .footer{padding:16px 8px !important;font-size:9px !important}
+}
+</style>"""
+    if 'id="penyli-v10-1-mobile-consolidation"' not in html:
+        html = html.replace("</head>", mobile_css + "</head>", 1)
+    return Response(html, mimetype="text/html")
 
 
 

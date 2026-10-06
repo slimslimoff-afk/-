@@ -15,7 +15,7 @@ Run:
   python PENYLI_BEYOND_REALMS_v10_0_PAYMENT_SERVER.py
 """
 
-import os, sqlite3, uuid, hashlib, json, base64
+import os, sqlite3, uuid, hashlib, json, base64, hmac, urllib.request, urllib.error
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from datetime import datetime, timezone
@@ -31,6 +31,11 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 stripe.api_key = STRIPE_SECRET_KEY or None
 WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 BASE_URL = os.environ.get("BASE_URL", "")
+LEMONSQUEEZY_API_KEY = os.environ.get("LEMONSQUEEZY_API_KEY", "")
+LEMONSQUEEZY_STORE_ID = os.environ.get("LEMONSQUEEZY_STORE_ID", "")
+LEMONSQUEEZY_VARIANT_ID = os.environ.get("LEMONSQUEEZY_VARIANT_ID", "")
+LEMONSQUEEZY_WEBHOOK_SECRET = os.environ.get("LEMONSQUEEZY_WEBHOOK_SECRET", "")
+LEMONSQUEEZY_TEST_MODE = os.environ.get("LEMONSQUEEZY_TEST_MODE", "true").lower() == "true"
 DB = os.environ.get("PENYLI_DB", "penyli_production.db")
 AMOUNT_CENTS = 100
 CURRENCY = "usd"
@@ -148,6 +153,14 @@ def init_db():
         signed_at TEXT NOT NULL
       )
     """)
+    for ddl in (
+        "ALTER TABLE payments ADD COLUMN provider TEXT DEFAULT 'stripe'",
+        "ALTER TABLE payments ADD COLUMN provider_order_id TEXT"
+    ):
+        try:
+            con.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
     con.commit()
     con.close()
 
@@ -216,6 +229,8 @@ def mvp_readiness():
         "base_url_configured":bool(os.environ.get("BASE_URL")),
         "signing_key_configured":os.path.exists(SIGNING_KEY_PATH),
         "allowed_origins_configured":bool(ALLOWED_ORIGINS),
+        "lemon_squeezy_configured":lemon_configured(),
+        "lemon_squeezy_webhook_configured":bool(LEMONSQUEEZY_WEBHOOK_SECRET),
         "production_mode":PRODUCTION
     }
     return jsonify({
@@ -274,67 +289,151 @@ def add_security_headers(response):
         response.headers["Strict-Transport-Security"]="max-age=31536000; includeSubDomains"
     return response
 
+def lemon_configured():
+    return bool(LEMONSQUEEZY_API_KEY and LEMONSQUEEZY_STORE_ID and LEMONSQUEEZY_VARIANT_ID and BASE_URL)
+
+def lemon_api_request(payload):
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.lemonsqueezy.com/v1/checkouts",
+        data=body,
+        method="POST",
+        headers={
+            "Accept": "application/vnd.api+json",
+            "Content-Type": "application/vnd.api+json",
+            "Authorization": "Bearer " + LEMONSQUEEZY_API_KEY
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError("LEMONSQUEEZY_API_ERROR:" + detail[:1000])
+
+def create_lemon_checkout(payment_id, client_request_id):
+    payload = {
+        "data": {
+            "type": "checkouts",
+            "attributes": {
+                "custom_price": AMOUNT_CENTS,
+                "product_options": {
+                    "name": "PENYLI — BEYOND REALMS Creation",
+                    "description": "Create one verified trace in PENYLI — BEYOND REALMS.",
+                    "redirect_url": BASE_URL + "/payment/success?provider=lemonsqueezy",
+                    "receipt_button_text": "Return to PENYLI",
+                    "receipt_link_url": BASE_URL,
+                    "enabled_variants": [int(LEMONSQUEEZY_VARIANT_ID)]
+                },
+                "checkout_data": {
+                    "custom": {
+                        "payment_id": payment_id,
+                        "client_request_id": client_request_id,
+                        "purpose": "REALM_CREATION"
+                    }
+                },
+                "test_mode": LEMONSQUEEZY_TEST_MODE
+            },
+            "relationships": {
+                "store": {"data": {"type": "stores", "id": str(LEMONSQUEEZY_STORE_ID)}},
+                "variant": {"data": {"type": "variants", "id": str(LEMONSQUEEZY_VARIANT_ID)}}
+            }
+        }
+    }
+    result = lemon_api_request(payload)
+    data = result.get("data", {})
+    attrs = data.get("attributes", {})
+    if not attrs.get("url"):
+        raise RuntimeError("LEMONSQUEEZY_CHECKOUT_URL_MISSING")
+    return data.get("id"), attrs["url"]
+
 @app.get("/api/payment/create")
 def create_payment():
-    if not STRIPE_SECRET_KEY or not BASE_URL:
+    provider = "lemonsqueezy" if lemon_configured() else "stripe"
+    if provider == "stripe" and (not STRIPE_SECRET_KEY or not BASE_URL):
         return jsonify({"error":"PAYMENT_NOT_CONFIGURED"}), 503
     client_request_id = request.args.get("client_request_id") or str(uuid.uuid4())
-
     con = db()
-    row = con.execute(
-        "SELECT * FROM payments WHERE client_request_id=?",
-        (client_request_id,)
-    ).fetchone()
-
+    row = con.execute("SELECT * FROM payments WHERE client_request_id=?", (client_request_id,)).fetchone()
     if row:
         con.close()
         return jsonify({
             "payment_id": row["payment_id"],
+            "checkout_url": row["checkout_session_id"],
             "checkout_session_id": row["checkout_session_id"],
-            "status": row["status"]
+            "status": row["status"],
+            "provider": row["provider"] if "provider" in row.keys() else "stripe"
         })
-
     payment_id = "PAY-" + uuid.uuid4().hex.upper()
     con.execute("""
       INSERT INTO payments
-      (payment_id,client_request_id,amount_cents,currency,status,created_at)
-      VALUES (?,?,?,?,?,?)
-    """, (payment_id, client_request_id, AMOUNT_CENTS, CURRENCY, "CREATED", now()))
+      (payment_id,client_request_id,amount_cents,currency,status,created_at,provider)
+      VALUES (?,?,?,?,?,?,?)
+    """, (payment_id, client_request_id, AMOUNT_CENTS, CURRENCY, "CREATED", now(), provider))
     con.commit()
     con.close()
+    try:
+        if provider == "lemonsqueezy":
+            checkout_id, checkout_url = create_lemon_checkout(payment_id, client_request_id)
+            con = db()
+            con.execute("UPDATE payments SET checkout_session_id=?, status='CHECKOUT_CREATED' WHERE payment_id=?", (checkout_url, payment_id))
+            con.commit()
+            con.close()
+            return jsonify({"payment_id":payment_id,"checkout_url":checkout_url,"checkout_id":checkout_id,"status":"CHECKOUT_CREATED","provider":"lemonsqueezy","test_mode":LEMONSQUEEZY_TEST_MODE})
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            line_items=[{"price_data":{"currency":CURRENCY,"product_data":{"name":"PENYLI — BEYOND REALMS Creation"},"unit_amount":AMOUNT_CENTS},"quantity":1}],
+            metadata={"payment_id":payment_id,"client_request_id":client_request_id,"purpose":"REALM_CREATION"},
+            success_url=BASE_URL + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=BASE_URL + "/payment/cancel"
+        )
+        con = db()
+        con.execute("UPDATE payments SET checkout_session_id=?, status='CHECKOUT_CREATED' WHERE payment_id=?", (session.id, payment_id))
+        con.commit()
+        con.close()
+        return jsonify({"payment_id":payment_id,"checkout_url":session.url,"status":"CHECKOUT_CREATED","provider":"stripe"})
+    except Exception as exc:
+        con = db()
+        con.execute("UPDATE payments SET status='CHECKOUT_ERROR' WHERE payment_id=?", (payment_id,))
+        con.commit()
+        con.close()
+        return jsonify({"error":"CHECKOUT_CREATION_FAILED","provider":provider,"detail":str(exc)[:500]}), 502
 
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        line_items=[{
-            "price_data": {
-                "currency": CURRENCY,
-                "product_data": {"name": "PENYLI — BEYOND REALMS Creation"},
-                "unit_amount": AMOUNT_CENTS
-            },
-            "quantity": 1
-        }],
-        metadata={
-            "payment_id": payment_id,
-            "client_request_id": client_request_id,
-            "purpose": "REALM_CREATION"
-        },
-        success_url=BASE_URL + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
-        cancel_url=BASE_URL + "/payment/cancel"
-    )
-
+@app.post("/api/payment/lemon-webhook")
+def lemon_webhook():
+    if not LEMONSQUEEZY_WEBHOOK_SECRET:
+        return jsonify({"error":"LEMON_WEBHOOK_NOT_CONFIGURED"}), 503
+    payload = request.data
+    signature = request.headers.get("X-Signature", "")
+    expected = hmac.new(LEMONSQUEEZY_WEBHOOK_SECRET.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    if not signature or not hmac.compare_digest(expected, signature):
+        return jsonify({"error":"INVALID_WEBHOOK_SIGNATURE"}), 401
+    try:
+        event = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return jsonify({"error":"INVALID_JSON"}), 400
+    if event.get("meta", {}).get("event_name") != "order_created":
+        return jsonify({"received":True})
+    custom = event.get("meta", {}).get("custom_data") or {}
+    payment_id = custom.get("payment_id")
+    if not payment_id or custom.get("purpose") != "REALM_CREATION":
+        return jsonify({"error":"INVALID_PAYMENT_METADATA"}), 400
+    attrs = event.get("data", {}).get("attributes", {})
+    if attrs.get("status") != "paid":
+        return jsonify({"received":True})
+    order_id = str(event.get("data", {}).get("id") or attrs.get("identifier") or "")
     con = db()
-    con.execute("""
-      UPDATE payments SET checkout_session_id=?, status='CHECKOUT_CREATED'
-      WHERE payment_id=?
-    """, (session.id, payment_id))
-    con.commit()
+    row = con.execute("SELECT * FROM payments WHERE payment_id=?", (payment_id,)).fetchone()
+    if row and row["status"] != "PAID":
+        creation_id = "CREATION-" + uuid.uuid4().hex.upper()
+        gene_id = "GENE-" + uuid.uuid4().hex.upper()
+        con.execute("""UPDATE payments SET payment_intent_id=?, creation_id=?, provider_order_id=?, status='PAID', paid_at=? WHERE payment_id=?""",
+                    (order_id, creation_id, order_id, now(), payment_id))
+        con.execute("""INSERT INTO creations (creation_id,payment_id,realm_id,gene_id,created_at,status) VALUES (?,?,?,?,?,?)""",
+                    (creation_id, payment_id, None, gene_id, now(), "CREATED"))
+        con.commit()
     con.close()
-
-    return jsonify({
-        "payment_id": payment_id,
-        "checkout_url": session.url,
-        "status": "CHECKOUT_CREATED"
-    })
+    return jsonify({"received":True,"provider":"lemonsqueezy"})
 
 @app.post("/api/payment/webhook")
 def webhook():

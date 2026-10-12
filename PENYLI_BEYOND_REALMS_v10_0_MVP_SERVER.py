@@ -342,7 +342,7 @@ def create_lemon_checkout(payment_id, client_request_id):
                 "product_options": {
                     "name": "PENYLI — BEYOND REALMS Creation",
                     "description": "Create one verified trace in PENYLI — BEYOND REALMS.",
-                    "redirect_url": BASE_URL + "/payment/success?provider=lemonsqueezy",
+                    "redirect_url": BASE_URL + "/payment/success?provider=lemonsqueezy&payment_id=" + urllib.parse.quote(payment_id),
                     "receipt_button_text": "Return to PENYLI",
                     "receipt_link_url": BASE_URL,
                     "enabled_variants": [int(LEMONSQUEEZY_VARIANT_ID)]
@@ -1073,8 +1073,56 @@ def creation_status(creation_id):
 
 @app.get("/payment/success")
 def success():
-    session_id = request.args.get("session_id")
-    return redirect("/")
+    # Lemon Squeezy redirects here after checkout. Verify payment state through
+    # the server and keep the user on a confirmation page instead of the homepage.
+    payment_id = (request.args.get("payment_id") or "").strip()
+    if not payment_id:
+        return redirect("/?payment=return_missing_id")
+
+    safe_payment_id = json.dumps(payment_id)
+    page = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PENYLI — Creation Confirmation</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 30%,#4c3518 0,#111722 48%,#03060b 100%);color:#f7f3e9;font-family:Inter,Arial,sans-serif;padding:24px}.card{width:min(720px,100%);border:1px solid #c9a23c;border-radius:24px;padding:clamp(24px,5vw,48px);background:#070b12d9;box-shadow:0 20px 90px #0009;text-align:center}.eyebrow{color:#e6bd4c;letter-spacing:.24em;font-size:12px}.mark{font-family:Georgia,serif;font-size:clamp(34px,7vw,54px);margin:18px 0 8px}.sub{color:#d7d4ce;line-height:1.6}.state{margin:26px 0;padding:18px;border:1px solid #6f5a2a;border-radius:14px;background:#11151d}.id{font:600 clamp(14px,2.5vw,19px) ui-monospace,monospace;overflow-wrap:anywhere;color:#f2cf63}.small{font-size:13px;color:#b8bec8}.actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:24px}a,button{border:1px solid #d5ad43;border-radius:999px;padding:12px 20px;background:#d5ad43;color:#12100a;text-decoration:none;font-weight:700;cursor:pointer}a.secondary,button.secondary{background:transparent;color:#f3d475}.hidden{display:none!important}
+</style></head><body><main class="card"><div class="eyebrow">PENYLI · BEYOND REALMS</div><div class="mark">Creation confirmation</div><p class="sub" id="message">Checking the payment with the PENYLI server…</p><section class="state"><div class="small" id="status">PAYMENT STATUS: CHECKING</div><p class="id" id="creation">Waiting for confirmed Creation ID…</p><div class="small" id="extra"></div></section><p class="sub" id="note">Do not pay again. This page will check the server automatically.</p><div class="actions"><a id="continue" class="hidden" href="/?view=create">Continue to PENYLI</a><button class="secondary" id="retry" type="button">Check again</button><a class="secondary" href="/">Home</a></div></main>
+<script>
+const paymentId = __PAYMENT_ID__;
+const statusEl=document.getElementById('status'), creationEl=document.getElementById('creation'), messageEl=document.getElementById('message'), extraEl=document.getElementById('extra'), noteEl=document.getElementById('note'), continueEl=document.getElementById('continue');
+let tries=0, timer=null;
+async function check(){
+  if(timer)clearTimeout(timer);
+  statusEl.textContent='PAYMENT STATUS: CHECKING';
+  try{
+    const r=await fetch('/api/payment/status/'+encodeURIComponent(paymentId),{cache:'no-store'});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||'Payment record not found');
+    extraEl.textContent='Payment reference: '+j.payment_id;
+    if(j.status==='PAID' && j.creation_id){
+      statusEl.textContent='PAYMENT STATUS: CONFIRMED';
+      creationEl.textContent=j.creation_id;
+      messageEl.textContent='Your payment is confirmed. Your Creation ID has been recorded.';
+      noteEl.textContent='Keep this Creation ID. You can continue to PENYLI.';
+      continueEl.classList.remove('hidden');
+      return;
+    }
+    statusEl.textContent='PAYMENT STATUS: '+(j.status||'PENDING');
+    creationEl.textContent='Creation ID will appear after server confirmation.';
+    messageEl.textContent='The checkout returned successfully, but the server has not confirmed the creation yet.';
+    noteEl.textContent='The page will retry automatically. Do not submit another payment.';
+  }catch(e){
+    statusEl.textContent='SERVER CHECK: RETRYING';
+    messageEl.textContent='We could not confirm the payment record yet.';
+    noteEl.textContent='Details: '+e.message+'. The page will retry automatically.';
+  }
+  tries++;
+  if(tries<31)timer=setTimeout(check,2000);
+}
+document.getElementById('retry').addEventListener('click',check);
+check();
+</script></body></html>"""
+    return Response(page.replace("__PAYMENT_ID__", safe_payment_id), mimetype="text/html")
+
 
 @app.get("/payment/cancel")
 def cancel():

@@ -213,8 +213,23 @@ def index():
   .footer{padding:16px 8px !important;font-size:9px !important}
 }
 </style>"""
+    origin_fix = """<script id="penyli-server-origin-fix">
+(function(){
+  try {
+    var origin = window.location.origin;
+    for (var i=0; i<localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (!key || !/^penyli_v\\d+_server$/.test(key)) continue;
+      var value = localStorage.getItem(key);
+      if (value && /^http:\\/\\/localhost(?::\\d+)?\\/?$/.test(value)) localStorage.setItem(key, origin);
+    }
+  } catch(e) {}
+})();
+</script>"""
     if 'id="penyli-v10-1-mobile-consolidation"' not in html:
         html = html.replace("</head>", mobile_css + "</head>", 1)
+    if 'id="penyli-server-origin-fix"' not in html:
+        html = html.replace("</head>", origin_fix + "</head>", 1)
     return Response(html, mimetype="text/html")
 
 
@@ -233,8 +248,15 @@ def mvp_readiness():
         "lemon_squeezy_webhook_configured":bool(LEMONSQUEEZY_WEBHOOK_SECRET),
         "production_mode":PRODUCTION
     }
+    stripe_ready = checks["stripe_secret_configured"] and checks["stripe_webhook_configured"]
+    lemon_ready = checks["lemon_squeezy_configured"] and checks["lemon_squeezy_webhook_configured"]
+    checks["payment_provider_ready"] = stripe_ready or lemon_ready
+    required = [
+        "base_url_configured", "signing_key_configured",
+        "allowed_origins_configured", "payment_provider_ready", "production_mode"
+    ]
     return jsonify({
-        "ready":all(checks.values()),
+        "ready":all(checks[k] for k in required),
         "checks":checks,
         "note":"No secret values are returned."
     })

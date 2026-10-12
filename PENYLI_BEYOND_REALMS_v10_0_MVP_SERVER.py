@@ -15,7 +15,7 @@ Run:
   python PENYLI_BEYOND_REALMS_v10_0_PAYMENT_SERVER.py
 """
 
-import os, sqlite3, uuid, hashlib, json, base64, hmac, urllib.request, urllib.error
+import os, sqlite3, uuid, hashlib, json, base64, hmac, urllib.request, urllib.error, urllib.parse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from datetime import datetime, timezone

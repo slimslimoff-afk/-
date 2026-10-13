@@ -254,7 +254,7 @@ def index():
         "async function checkPayment(show=true){if(!creationId)return;try{const cr=await fetch('/api/creation/'+encodeURIComponent(creationId),{cache:'no-store'});const cj=await cr.json();if(!cr.ok)throw Error(cj.error||'Creation not found');const pid=paymentId||cj.payment_id;const r=await fetch('/api/payment/status/'+encodeURIComponent(pid),{cache:'no-store'});const j=await r.json();if(!r.ok||j.creation_id!==creationId)throw Error(j.error||'Payment does not match creation');"
     );
     html = html.replace(
-        "$('v55Id').textContent='CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
+        "if(creationId)$('v55Id').textContent='CREATION ID: '+creationId; $('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\\\nCREATOR ID: '+id:'CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
         "$('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\nCREATOR ID: '+id:'CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));"
     );
     html = html.replace(

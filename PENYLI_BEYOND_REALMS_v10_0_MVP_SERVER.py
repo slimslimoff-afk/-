@@ -230,29 +230,35 @@ def index():
         html = html.replace("</head>", mobile_css + "</head>", 1)
     if 'id="penyli-server-origin-fix"' not in html:
         html = html.replace("</head>", origin_fix + "</head>", 1)
-    creation_handoff = """<script id="penyli-creation-handoff">
+    payment_bridge = """<script id="penyli-creation-handoff">
 (function(){
-  // Persist the paid Creation ID only. Do not rewrite application DOM or click tabs:
-  // the product UI owns its modal, form fields, and navigation.
-  function persistCreationId(){
-    try {
-      var params = new URLSearchParams(window.location.search);
-      var id = params.get('creation_id');
-      if (id && /^CREATION-[A-F0-9]{16,64}$/i.test(id)) {
-        localStorage.setItem('penyli_last_creation_id', id);
-        localStorage.setItem('penyli_pending_creation_id', id);
-      }
-    } catch(e) {}
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', persistCreationId, {once:true});
-  } else {
-    persistCreationId();
-  }
+  var q=new URLSearchParams(location.search),id=q.get('creation_id'),pid=q.get('payment_id');
+  if(q.get('view')!=='create'||!id||!/^CREATION-[A-F0-9]{16,64}$/i.test(id))return;
+  try{
+    localStorage.setItem('penyli_last_creation_id',id);
+    localStorage.setItem('penyli_pending_creation_id',id);
+    localStorage.setItem('penyli_v56_creation',id);
+    if(pid){localStorage.setItem('penyli_v56_payment',pid);localStorage.setItem('penyli_last_payment_id',pid)}
+  }catch(e){}
+  var n=0,t=setInterval(function(){
+    n++;
+    if(typeof window.PENYLI_OPEN_CREATOR_EXPERIENCE==='function'){
+      clearInterval(t);window.PENYLI_OPEN_CREATOR_EXPERIENCE();
+    }else if(n>=80)clearInterval(t);
+  },250);
 })();
 </script>""";
+    # Use the real payment record for the existing Creator modal's confirmation step.
+    html = html.replace(
+        "async function checkPayment(show=true){if(!creationId)return;try{const r=await authFetch(server()+'/v16/payments/status?creation_id='+encodeURIComponent(creationId));const j=await r.json();",
+        "async function checkPayment(show=true){if(!creationId)return;try{const cr=await fetch('/api/creation/'+encodeURIComponent(creationId),{cache:'no-store'});const cj=await cr.json();if(!cr.ok)throw Error(cj.error||'Creation not found');const pid=paymentId||cj.payment_id;const r=await fetch('/api/payment/status/'+encodeURIComponent(pid),{cache:'no-store'});const j=await r.json();if(!r.ok||j.creation_id!==creationId)throw Error(j.error||'Payment does not match creation');"
+    );
+    html = html.replace(
+        "$('v55Id').textContent='CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
+        "$('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\nCREATOR ID: '+id:'CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));"
+    );
     if 'id="penyli-creation-handoff"' not in html:
-        html = html.replace("</head>", creation_handoff + "</head>", 1)
+        html = html.replace("</head>", payment_bridge + "</head>", 1)
     return Response(html, mimetype="text/html")
 
 

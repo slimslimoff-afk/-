@@ -232,49 +232,55 @@ def index():
         html = html.replace("</head>", origin_fix + "</head>", 1)
     creation_handoff = """<script id="penyli-creation-handoff">
 (function(){
-  function run(){
+  function normalize(s){ return (s || '').replace(/\\s+/g,' ').trim(); }
+  function syncCreation(){
     try {
       var params = new URLSearchParams(window.location.search);
-      if (params.get('view') !== 'create') return;
-      var creationId = params.get('creation_id');
-      if (creationId) {
-        localStorage.setItem('penyli_last_creation_id', creationId);
-        localStorage.setItem('penyli_pending_creation_id', creationId);
-      }
-      var attempts = 0;
-      var timer = setInterval(function(){
-        attempts++;
-        var candidates = Array.prototype.slice.call(document.querySelectorAll('button,a,[role="button"],[role="tab"],.nav-item,.tab'));
-        var target = candidates.find(function(el){
-          var label = (el.innerText || el.textContent || '').replace(/\\s+/g,' ').trim().toLowerCase();
-          return label === 'создать' || label === 'create' || label === 'create trace';
-        });
-        if (target) {
-          target.click();
-          clearInterval(timer);
-          if (creationId) {
-            var banner = document.getElementById('penyli-creation-handoff-banner');
-            if (!banner) {
-              banner = document.createElement('div');
-              banner.id = 'penyli-creation-handoff-banner';
-              banner.style.cssText = 'position:fixed;z-index:99999;left:50%;bottom:86px;transform:translateX(-50%);width:min(92vw,620px);padding:14px 18px;border:1px solid #c9a23c;border-radius:14px;background:#080d15;color:#f4d16b;font:600 13px/1.5 Arial,sans-serif;box-shadow:0 8px 32px #0009;overflow-wrap:anywhere;text-align:center';
-              document.body.appendChild(banner);
-            }
-            banner.textContent = 'Ваша оплата подтверждена · Creation ID: ' + creationId;
-          }
-        } else if (attempts >= 30) {
-          clearInterval(timer);
-          if (creationId) {
-            var note = document.createElement('div');
-            note.style.cssText = 'position:fixed;z-index:99999;left:50%;bottom:20px;transform:translateX(-50%);width:min(92vw,620px);padding:14px 18px;border:1px solid #c9a23c;border-radius:14px;background:#080d15;color:#f4d16b;font:600 13px/1.5 Arial,sans-serif;overflow-wrap:anywhere;text-align:center';
-            note.textContent = 'Creation ID сохранён: ' + creationId + '. Откройте раздел «Создать».';
-            document.body.appendChild(note);
-          }
+      var creationId = params.get('creation_id') || localStorage.getItem('penyli_pending_creation_id') || localStorage.getItem('penyli_last_creation_id');
+      if (!creationId || !/^CREATION-[A-F0-9]{16,64}$/i.test(creationId)) return;
+      localStorage.setItem('penyli_last_creation_id', creationId);
+      localStorage.setItem('penyli_pending_creation_id', creationId);
+
+      // Fill the real Creation screen fields without replacing the approved UI.
+      Array.prototype.slice.call(document.querySelectorAll('body *')).forEach(function(el){
+        if (el.children.length > 3) return;
+        var text = normalize(el.textContent);
+        if (/^CREATOR ID\\s*:\\s*(—|-|NO-CREATION)$/i.test(text)) {
+          el.textContent = 'CREATOR ID: ' + creationId;
         }
-      }, 300);
+        if (text.indexOf('Оплата ещё не считается подтверждённой') !== -1) {
+          el.textContent = text.replace('Оплата ещё не считается подтверждённой.', 'Оплата подтверждена сервером. Ваш Creation ID сохранён.');
+        }
+      });
+
+      // Remove the old floating toast if an earlier script version created it.
+      var oldBanner = document.getElementById('penyli-creation-handoff-banner');
+      if (oldBanner) oldBanner.remove();
+
+      // Ask the existing app to open Create, then sync again after its UI renders.
+      var candidates = Array.prototype.slice.call(document.querySelectorAll('button,a,[role="button"],[role="tab"],.nav-item,.tab'));
+      var target = candidates.find(function(el){
+        var label = normalize(el.innerText || el.textContent).toLowerCase();
+        return label === 'создать' || label === 'create' || label === 'create trace';
+      });
+      if (target && !target.dataset.penyliHandoffClicked) {
+        target.dataset.penyliHandoffClicked = '1';
+        target.click();
+      }
     } catch(e) {}
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
+  function start(){
+    syncCreation();
+    var count = 0;
+    var timer = setInterval(function(){
+      syncCreation();
+      count++;
+      if (count >= 40) clearInterval(timer);
+    }, 500);
+    window.addEventListener('pageshow', syncCreation);
+    window.addEventListener('storage', syncCreation);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 </script>""";
     if 'id="penyli-creation-handoff"' not in html:

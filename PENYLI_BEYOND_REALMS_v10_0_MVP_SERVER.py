@@ -257,6 +257,14 @@ def index():
         "$('v55Id').textContent='CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
         "$('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\nCREATOR ID: '+id:'CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));"
     );
+    html = html.replace(
+        "async function load(){try{const id=await ensureIdentity();$('v55Id').textContent='CREATOR ID: '+id;",
+        "async function load(){try{if(creationId)$('v55Id').textContent='CREATION ID: '+creationId;const id=await ensureIdentity();$('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\\\nCREATOR ID: '+id:'CREATOR ID: '+id;"
+    );
+    html = html.replace(
+        "const r=await authFetch(server()+'/v16/traces/birth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({creator_id:await ensureIdentity(),creation_id:creationId,payment_id:paymentId})});const j=await r.json();if(!r.ok)throw Error(j.error||'Birth failed');traceId=j.trace_id;",
+        "const ps=await fetch('/api/payment/status/'+encodeURIComponent(paymentId),{cache:'no-store'});const pj=await ps.json();if(!ps.ok||pj.status!=='PAID'||pj.creation_id!==creationId)throw Error('Payment is not confirmed for this Creation ID');const r=await fetch('/api/creation/'+encodeURIComponent(creationId)+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({realm_id:'REALM-GLOBAL'})});const j=await r.json();if(!r.ok)throw Error(j.error||'Birth failed');traceId=(j.mutation&&j.mutation.gene_id)||creationId;j.world_version=(j.mutation&&j.mutation.world_version)||1;"
+    );
     if 'id="penyli-creation-handoff"' not in html:
         html = html.replace("</head>", payment_bridge + "</head>", 1)
     return Response(html, mimetype="text/html")
@@ -1132,7 +1140,7 @@ async function check(){
       creationEl.textContent=j.creation_id;
       messageEl.textContent='Your payment is confirmed. Your Creation ID has been recorded.';
       noteEl.textContent='Keep this Creation ID. You can continue to PENYLI.';
-      continueEl.href='/?view=create&creation_id='+encodeURIComponent(j.creation_id);
+      continueEl.href='/?view=create&creation_id='+encodeURIComponent(j.creation_id)+'&payment_id='+encodeURIComponent(j.payment_id||paymentId);
       continueEl.classList.remove('hidden');
       return;
     }

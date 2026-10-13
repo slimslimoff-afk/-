@@ -263,7 +263,7 @@ def index():
         var label = normalize(el.innerText || el.textContent).toLowerCase();
         return label === 'создать' || label === 'create' || label === 'create trace';
       });
-      if (target && !target.dataset.penyliHandoffClicked) {
+      if (params.get('view') === 'create' && target && !target.dataset.penyliHandoffClicked) {
         target.dataset.penyliHandoffClicked = '1';
         target.click();
       }

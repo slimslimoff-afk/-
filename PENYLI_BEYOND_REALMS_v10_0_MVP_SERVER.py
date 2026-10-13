@@ -904,6 +904,14 @@ def apply_creation_to_realm(creation_id, realm_id=None):
         con.close()
         return None, "CREATION_NOT_FOUND"
 
+    payment = con.execute(
+        "SELECT status,creation_id FROM payments WHERE payment_id=?",
+        (creation["payment_id"],)
+    ).fetchone()
+    if not payment or payment["status"] != "PAID" or payment["creation_id"] != creation_id:
+        con.close()
+        return None, "PAYMENT_NOT_CONFIRMED_FOR_CREATION"
+
     # Idempotent: the same Creation can mutate the Realm only once.
     existing = con.execute(
         "SELECT * FROM realm_mutations WHERE creation_id=?",

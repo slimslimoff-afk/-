@@ -1,6 +1,6 @@
 <!-- PENYLI v10.1 — CREATOR ID DISPLAY FIX
      Insert immediately before </body> in PENYLI_BEYOND_REALMS_v10_0_MVP_SERVER_ORIGIN_FIX (2).html.
-     Functional-only patch. Keeps the existing design and payment authority. -->
+     Functional-only patch. Does not alter payment verification or generate a fake identity. -->
 <script id="v101-creator-id-display-fix">
 (()=> {
   'use strict';
@@ -12,36 +12,36 @@
   const readCreatorId = () =>
     localStorage.getItem('penyli_creator_id') ||
     localStorage.getItem('penyli_v57_creator') ||
-    localStorage.getItem('penyli_v56_creator') || '';
-  const readCreationId = () => localStorage.getItem('penyli_v56_creation') || '';
-  const readTraceId = () => localStorage.getItem('penyli_v56_trace') || '';
+    localStorage.getItem('penyli_v56_creator') ||
+    localStorage.getItem('penyli_creator') || '';
+  const readCreationId = () =>
+    localStorage.getItem('penyli_v56_creation') ||
+    localStorage.getItem('penyli_v55_creation') || '';
+  const readTraceId = () =>
+    localStorage.getItem('penyli_v56_trace') ||
+    localStorage.getItem('penyli_v55_trace') || '';
 
-  function ensureCreatorId() {
-    let id = readCreatorId();
-    if (!id) {
-      id = 'CREATOR-' + crypto.randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase();
-      localStorage.setItem('penyli_creator_id', id);
-    }
-    return id;
-  }
-
+  let lastRendered = '';
+  let rendering = false;
   function render() {
+    if (rendering) return;
     const rows = [
-      ['CREATOR ID', ensureCreatorId()],
+      ['CREATOR ID', readCreatorId()],
       ['CREATION ID', readCreationId()],
       ['TRACE ID', readTraceId()]
     ];
-    idBox.textContent = rows.map(([label, value]) => label + ': ' + (value || '—')).join('\n');
+    const next = rows.map(([label, value]) => label + ': ' + (value || '—')).join('\n');
+    if (next === lastRendered && idBox.textContent === next) return;
+    rendering = true;
+    lastRendered = next;
+    idBox.textContent = next;
+    rendering = false;
   }
 
-  // The legacy payment handlers replace #v55Id.textContent wholesale.
-  // Observe the element and immediately restore the distinct identity rows.
-  let rendering = false;
+  // Legacy handlers replace #v55Id wholesale; restore the separate fields.
+  // Guarding against identical content prevents a MutationObserver loop.
   const observer = new MutationObserver(() => {
-    if (rendering) return;
-    rendering = true;
-    render();
-    rendering = false;
+    if (idBox.textContent !== lastRendered) render();
   });
   observer.observe(idBox, { childList: true, characterData: true, subtree: true });
 
@@ -52,12 +52,15 @@
 
   window.addEventListener('pageshow', render);
   window.addEventListener('storage', event => {
-    if (!event.key || /^penyli_(creator_id|v57_creator|v56_creator|v56_creation|v56_trace)$/.test(event.key)) render();
+    if (!event.key || /^penyli_(creator_id|v57_creator|v56_creator|creator|v56_creation|v55_creation|v56_trace|v55_trace)$/.test(event.key)) {
+      render();
+    }
   });
   document.addEventListener('click', event => {
     if (event.target.closest('#v55Create, #v55Next')) {
       setTimeout(render, 0);
       setTimeout(render, 250);
+      setTimeout(render, 800);
     }
   });
 

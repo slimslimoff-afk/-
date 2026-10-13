@@ -1,0 +1,67 @@
+<!-- PENYLI v10.1 — CREATOR ID DISPLAY FIX
+     Insert immediately before </body> in PENYLI_BEYOND_REALMS_v10_0_MVP_SERVER_ORIGIN_FIX (2).html.
+     Functional-only patch. Keeps the existing design and payment authority. -->
+<script id="v101-creator-id-display-fix">
+(()=> {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const modal = $('v55Creator');
+  const idBox = $('v55Id');
+  if (!modal || !idBox) return;
+
+  const readCreatorId = () =>
+    localStorage.getItem('penyli_creator_id') ||
+    localStorage.getItem('penyli_v57_creator') ||
+    localStorage.getItem('penyli_v56_creator') || '';
+  const readCreationId = () => localStorage.getItem('penyli_v56_creation') || '';
+  const readTraceId = () => localStorage.getItem('penyli_v56_trace') || '';
+
+  function ensureCreatorId() {
+    let id = readCreatorId();
+    if (!id) {
+      id = 'CREATOR-' + crypto.randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase();
+      localStorage.setItem('penyli_creator_id', id);
+    }
+    return id;
+  }
+
+  function render() {
+    const rows = [
+      ['CREATOR ID', ensureCreatorId()],
+      ['CREATION ID', readCreationId()],
+      ['TRACE ID', readTraceId()]
+    ];
+    idBox.textContent = rows.map(([label, value]) => label + ': ' + (value || '—')).join('\n');
+  }
+
+  // The legacy payment handlers replace #v55Id.textContent wholesale.
+  // Observe the element and immediately restore the distinct identity rows.
+  let rendering = false;
+  const observer = new MutationObserver(() => {
+    if (rendering) return;
+    rendering = true;
+    render();
+    rendering = false;
+  });
+  observer.observe(idBox, { childList: true, characterData: true, subtree: true });
+
+  const refreshWhenOpen = new MutationObserver(() => {
+    if (modal.classList.contains('open')) render();
+  });
+  refreshWhenOpen.observe(modal, { attributes: true, attributeFilter: ['class'] });
+
+  window.addEventListener('pageshow', render);
+  window.addEventListener('storage', event => {
+    if (!event.key || /^penyli_(creator_id|v57_creator|v56_creator|v56_creation|v56_trace)$/.test(event.key)) render();
+  });
+  document.addEventListener('click', event => {
+    if (event.target.closest('#v55Create, #v55Next')) {
+      setTimeout(render, 0);
+      setTimeout(render, 250);
+    }
+  });
+
+  window.PENYLI_CREATOR_ID_DISPLAY_V101 = { refresh: render };
+  render();
+})();
+</script>

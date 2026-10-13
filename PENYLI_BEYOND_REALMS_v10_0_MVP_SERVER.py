@@ -251,6 +251,10 @@ def index():
 </script>""";
     # Use the real payment record for the existing Creator modal's confirmation step.
     html = html.replace(
+        "result=await request('/v16/payments/status?creation_id='+encodeURIComponent(creationId));",
+        "const creation=await request('/api/creation/'+encodeURIComponent(creationId));const verifiedPaymentId=paymentId||creation.payment_id;if(!verifiedPaymentId)throw Error('Payment ID missing');result=await request('/api/payment/status/'+encodeURIComponent(verifiedPaymentId));if(result.creation_id!==creationId)throw Error('Payment does not match Creation ID');"
+    );
+    html = html.replace(
         "async function checkPayment(show=true){if(!creationId)return;try{const r=await authFetch(server()+'/v16/payments/status?creation_id='+encodeURIComponent(creationId));const j=await r.json();",
         "async function checkPayment(show=true){if(!creationId&&!paymentId)return;try{if(!paymentId&&creationId){const cr=await authFetch(server()+'/api/creation/'+encodeURIComponent(creationId));const cj=await cr.json();if(!cr.ok)throw Error(cj.error||'Creation not found');paymentId=cj.payment_id||'';}if(!paymentId)return;const r=await authFetch(server()+'/api/payment/status/'+encodeURIComponent(paymentId));const j=await r.json();if(!r.ok)throw Error(j.error||'Payment status failed');if(!creationId&&j.creation_id){creationId=j.creation_id;localStorage.setItem('penyli_v56_creation',creationId);}if(!creationId||j.creation_id!==creationId)throw Error('Payment does not match creation');"
     );

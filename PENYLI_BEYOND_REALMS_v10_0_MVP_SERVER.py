@@ -155,7 +155,8 @@ def init_db():
     """)
     for ddl in (
         "ALTER TABLE payments ADD COLUMN provider TEXT DEFAULT 'stripe'",
-        "ALTER TABLE payments ADD COLUMN provider_order_id TEXT"
+        "ALTER TABLE payments ADD COLUMN provider_order_id TEXT",
+        "ALTER TABLE payments ADD COLUMN creator_id TEXT"
     ):
         try:
             con.execute(ddl)
@@ -251,20 +252,27 @@ def index():
     # Use the real payment record for the existing Creator modal's confirmation step.
     html = html.replace(
         "async function checkPayment(show=true){if(!creationId)return;try{const r=await authFetch(server()+'/v16/payments/status?creation_id='+encodeURIComponent(creationId));const j=await r.json();",
-        "async function checkPayment(show=true){if(!creationId)return;try{const cr=await fetch('/api/creation/'+encodeURIComponent(creationId),{cache:'no-store'});const cj=await cr.json();if(!cr.ok)throw Error(cj.error||'Creation not found');const pid=paymentId||cj.payment_id;const r=await fetch('/api/payment/status/'+encodeURIComponent(pid),{cache:'no-store'});const j=await r.json();if(!r.ok||j.creation_id!==creationId)throw Error(j.error||'Payment does not match creation');"
+        "async function checkPayment(show=true){if(!creationId&&!paymentId)return;try{if(!paymentId&&creationId){const cr=await authFetch(server()+'/api/creation/'+encodeURIComponent(creationId));const cj=await cr.json();if(!cr.ok)throw Error(cj.error||'Creation not found');paymentId=cj.payment_id||'';}if(!paymentId)return;const r=await authFetch(server()+'/api/payment/status/'+encodeURIComponent(paymentId));const j=await r.json();if(!r.ok)throw Error(j.error||'Payment status failed');if(!creationId&&j.creation_id){creationId=j.creation_id;localStorage.setItem('penyli_v56_creation',creationId);}if(!creationId||j.creation_id!==creationId)throw Error('Payment does not match creation');"
     );
     html = html.replace(
-        "if(creationId)$('v55Id').textContent='CREATION ID: '+creationId; $('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\\\nCREATOR ID: '+id:'CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
-        "$('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\nCREATOR ID: '+id:'CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));"
-    );
-    html = html.replace(
-        "async function load(){try{const id=await ensureIdentity();$('v55Id').textContent='CREATOR ID: '+id;",
-        "async function load(){try{if(creationId)$('v55Id').textContent='CREATION ID: '+creationId;const id=await ensureIdentity();$('v55Id').textContent=creationId?'CREATION ID: '+creationId+'\\\\nCREATOR ID: '+id:'CREATOR ID: '+id;"
+        "async function load(){try{const id=await ensureIdentity();$('v55Id').textContent='CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
+        "async function load(){try{const id=await ensureIdentity();$('v55Id').textContent=creationId?('CREATION ID: '+creationId+String.fromCharCode(10)+'CREATOR ID: '+id):'CREATOR ID: '+id;const r=await authFetch(server()+'/api/creator/experience?creator_id='+encodeURIComponent(id));"
     );
     html = html.replace(
         "const r=await authFetch(server()+'/v16/traces/birth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({creator_id:await ensureIdentity(),creation_id:creationId,payment_id:paymentId})});const j=await r.json();if(!r.ok)throw Error(j.error||'Birth failed');traceId=j.trace_id;",
         "const ps=await fetch('/api/payment/status/'+encodeURIComponent(paymentId),{cache:'no-store'});const pj=await ps.json();if(!ps.ok||pj.status!=='PAID'||pj.creation_id!==creationId)throw Error('Payment is not confirmed for this Creation ID');const r=await fetch('/api/creation/'+encodeURIComponent(creationId)+'/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({realm_id:'REALM-GLOBAL'})});const j=await r.json();if(!r.ok)throw Error(j.error||'Birth failed');traceId=(j.mutation&&j.mutation.gene_id)||creationId;j.world_version=(j.mutation&&j.mutation.world_version)||1;"
     );
+    reserve_start = "async function reserve(){"
+    reserve_end = "async function checkPayment"
+    if reserve_start in html and reserve_end in html:
+        start = html.index(reserve_start)
+        end = html.index(reserve_end, start)
+        reserve_impl = """async function reserve(){if(busy)return;busy=true;$('v55Create').disabled=true;$('v55Note').textContent='CREATING PAYMENT SESSION…';try{const creatorId=await ensureIdentity();let requestId=localStorage.getItem('penyli_v10_payment_request_id');if(!requestId){requestId=(crypto.randomUUID?crypto.randomUUID():('REQ-'+Date.now()+'-'+Math.random().toString(16).slice(2)));localStorage.setItem('penyli_v10_payment_request_id',requestId)}const r=await authFetch(server()+'/api/payment/create?client_request_id='+encodeURIComponent(requestId)+'&creator_id='+encodeURIComponent(creatorId));const j=await r.json();if(!r.ok)throw Error(j.detail||j.error||'Payment initialization failed');paymentId=j.payment_id||paymentId;if(paymentId)localStorage.setItem('penyli_v56_payment',paymentId);creationId=j.creation_id||'';if(creationId)localStorage.setItem('penyli_v56_creation',creationId);$('v55Id').textContent=(creationId?'CREATION ID: '+creationId:'PAYMENT ID: '+paymentId)+String.fromCharCode(10)+'CREATOR ID: '+creatorId;$('v55Note').textContent=j.status==='PAID'?'PAYMENT CONFIRMED · CHECKING CREATION':'PAYMENT SESSION READY · COMPLETE CHECKOUT TO RECEIVE YOUR CREATION ID';stage=1;setStage(1);if(j.checkout_url){location.href=j.checkout_url}else if(j.status==='PAID'){await checkPayment(true)}else{$('v55Note').textContent='PAYMENT STATUS: '+(j.status||'PENDING')}}catch(e){$('v55Note').textContent='PAYMENT SETUP FAILED · '+e.message}finally{busy=false;$('v55Create').disabled=false}}"""
+        html = html[:start] + reserve_impl + html[end:]
+    html = html.replace(
+        "if(paid){stage=2;$('v55Note').textContent='PAYMENT CONFIRMED · READY FOR BIRTH';setStage(2)}",
+        "if(paid){localStorage.removeItem('penyli_v10_payment_request_id');stage=2;$('v55Note').textContent='PAYMENT CONFIRMED · READY FOR BIRTH';setStage(2)}"
+    )
     if 'id="penyli-creation-handoff"' not in html:
         html = html.replace("</head>", payment_bridge + "</head>", 1)
     return Response(html, mimetype="text/html")
@@ -412,6 +420,7 @@ def create_payment():
     if provider == "stripe" and (not STRIPE_SECRET_KEY or not BASE_URL):
         return jsonify({"error":"PAYMENT_NOT_CONFIGURED"}), 503
     client_request_id = request.args.get("client_request_id") or str(uuid.uuid4())
+    creator_id = (request.args.get("creator_id") or "").strip()
     con = db()
     row = con.execute("SELECT * FROM payments WHERE client_request_id=?", (client_request_id,)).fetchone()
     if row:
@@ -421,14 +430,15 @@ def create_payment():
             "checkout_url": row["checkout_session_id"],
             "checkout_session_id": row["checkout_session_id"],
             "status": row["status"],
+            "creation_id": row["creation_id"],
             "provider": row["provider"] if "provider" in row.keys() else "stripe"
         })
     payment_id = "PAY-" + uuid.uuid4().hex.upper()
     con.execute("""
       INSERT INTO payments
-      (payment_id,client_request_id,amount_cents,currency,status,created_at,provider)
-      VALUES (?,?,?,?,?,?,?)
-    """, (payment_id, client_request_id, AMOUNT_CENTS, CURRENCY, "CREATED", now(), provider))
+      (payment_id,client_request_id,amount_cents,currency,status,created_at,provider,creator_id)
+      VALUES (?,?,?,?,?,?,?,?)
+    """, (payment_id, client_request_id, AMOUNT_CENTS, CURRENCY, "CREATED", now(), provider, creator_id))
     con.commit()
     con.close()
     try:
@@ -443,11 +453,11 @@ def create_payment():
             mode="payment",
             line_items=[{"price_data":{"currency":CURRENCY,"product_data":{"name":"PENYLI — BEYOND REALMS Creation"},"unit_amount":AMOUNT_CENTS},"quantity":1}],
             metadata={"payment_id":payment_id,"client_request_id":client_request_id,"purpose":"REALM_CREATION"},
-            success_url=BASE_URL + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
+            success_url=BASE_URL + "/payment/success?payment_id=" + urllib.parse.quote(payment_id) + "&session_id={CHECKOUT_SESSION_ID}",
             cancel_url=BASE_URL + "/payment/cancel"
         )
         con = db()
-        con.execute("UPDATE payments SET checkout_session_id=?, status='CHECKOUT_CREATED' WHERE payment_id=?", (session.id, payment_id))
+        con.execute("UPDATE payments SET checkout_session_id=?, status='CHECKOUT_CREATED' WHERE payment_id=?", (session.url, payment_id))
         con.commit()
         con.close()
         return jsonify({"payment_id":payment_id,"checkout_url":session.url,"status":"CHECKOUT_CREATED","provider":"stripe"})
@@ -988,6 +998,32 @@ def payment_status(payment_id):
 
 
 
+
+
+@app.get("/api/creator/experience")
+def creator_experience():
+    creator_id = (request.args.get("creator_id") or "").strip()
+    if not creator_id:
+        return jsonify({"error":"CREATOR_ID_REQUIRED"}), 400
+    con = db()
+    row = con.execute("""
+        SELECT COUNT(DISTINCT rm.creation_id) AS traces,
+               COUNT(DISTINCT c.realm_id) AS realms,
+               COALESCE(MAX(rm.world_version),0) AS world_version
+        FROM payments p
+        LEFT JOIN creations c ON c.payment_id=p.payment_id
+        LEFT JOIN realm_mutations rm ON rm.creation_id=c.creation_id
+        WHERE p.creator_id=?
+    """, (creator_id,)).fetchone()
+    con.close()
+    return jsonify({
+        "creator_id": creator_id,
+        "traces": int(row["traces"] or 0),
+        "connections": 0,
+        "realms": int(row["realms"] or 0),
+        "world_version": int(row["world_version"] or 0),
+        "connections_supported": False
+    })
 
 
 @app.get("/api/realm/<realm_id>/certificate")

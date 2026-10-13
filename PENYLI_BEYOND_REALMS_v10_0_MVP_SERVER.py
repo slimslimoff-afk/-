@@ -230,6 +230,55 @@ def index():
         html = html.replace("</head>", mobile_css + "</head>", 1)
     if 'id="penyli-server-origin-fix"' not in html:
         html = html.replace("</head>", origin_fix + "</head>", 1)
+    creation_handoff = """<script id="penyli-creation-handoff">
+(function(){
+  function run(){
+    try {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get('view') !== 'create') return;
+      var creationId = params.get('creation_id');
+      if (creationId) {
+        localStorage.setItem('penyli_last_creation_id', creationId);
+        localStorage.setItem('penyli_pending_creation_id', creationId);
+      }
+      var attempts = 0;
+      var timer = setInterval(function(){
+        attempts++;
+        var candidates = Array.prototype.slice.call(document.querySelectorAll('button,a,[role="button"],[role="tab"],.nav-item,.tab'));
+        var target = candidates.find(function(el){
+          var label = (el.innerText || el.textContent || '').replace(/\\s+/g,' ').trim().toLowerCase();
+          return label === 'создать' || label === 'create' || label === 'create trace';
+        });
+        if (target) {
+          target.click();
+          clearInterval(timer);
+          if (creationId) {
+            var banner = document.getElementById('penyli-creation-handoff-banner');
+            if (!banner) {
+              banner = document.createElement('div');
+              banner.id = 'penyli-creation-handoff-banner';
+              banner.style.cssText = 'position:fixed;z-index:99999;left:50%;bottom:86px;transform:translateX(-50%);width:min(92vw,620px);padding:14px 18px;border:1px solid #c9a23c;border-radius:14px;background:#080d15;color:#f4d16b;font:600 13px/1.5 Arial,sans-serif;box-shadow:0 8px 32px #0009;overflow-wrap:anywhere;text-align:center';
+              document.body.appendChild(banner);
+            }
+            banner.textContent = 'Ваша оплата подтверждена · Creation ID: ' + creationId;
+          }
+        } else if (attempts >= 30) {
+          clearInterval(timer);
+          if (creationId) {
+            var note = document.createElement('div');
+            note.style.cssText = 'position:fixed;z-index:99999;left:50%;bottom:20px;transform:translateX(-50%);width:min(92vw,620px);padding:14px 18px;border:1px solid #c9a23c;border-radius:14px;background:#080d15;color:#f4d16b;font:600 13px/1.5 Arial,sans-serif;overflow-wrap:anywhere;text-align:center';
+            note.textContent = 'Creation ID сохранён: ' + creationId + '. Откройте раздел «Создать».';
+            document.body.appendChild(note);
+          }
+        }
+      }, 300);
+    } catch(e) {}
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
+})();
+</script>""";
+    if 'id="penyli-creation-handoff"' not in html:
+        html = html.replace("</head>", creation_handoff + "</head>", 1)
     return Response(html, mimetype="text/html")
 
 
@@ -1103,6 +1152,7 @@ async function check(){
       creationEl.textContent=j.creation_id;
       messageEl.textContent='Your payment is confirmed. Your Creation ID has been recorded.';
       noteEl.textContent='Keep this Creation ID. You can continue to PENYLI.';
+      continueEl.href='/?view=create&creation_id='+encodeURIComponent(j.creation_id);
       continueEl.classList.remove('hidden');
       return;
     }

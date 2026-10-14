@@ -298,7 +298,7 @@ def index():
     );
     html = html.replace(
         "async function load(){try{const id=await ensureIdentity();$('v55Id').textContent='CREATOR ID: '+id;const r=await authFetch(server()+'/v16/creator/experience?creator_id='+encodeURIComponent(id));",
-        "async function load(){try{const id=await ensureIdentity();$('v55Id').textContent=creationId?('CREATION ID: '+creationId+String.fromCharCode(10)+'CREATOR ID: '+id):'CREATOR ID: '+id;const r=await authFetch(server()+'/api/creator/experience?creator_id='+encodeURIComponent(id));"
+        "async function load(){try{creationId=creationId||localStorage.getItem('penyli_v56_creation')||localStorage.getItem('penyli_pending_creation_id')||localStorage.getItem('penyli_last_creation_id')||'';paymentId=paymentId||localStorage.getItem('penyli_v56_payment')||localStorage.getItem('penyli_last_payment_id')||'';const id=await ensureIdentity();$('v55Id').textContent=(creationId?'CREATION ID: '+creationId+String.fromCharCode(10):'')+'CREATOR ID: '+id;const r=await authFetch(server()+'/api/creator/experience?creator_id='+encodeURIComponent(id));"
     );
     html = html.replace(
         "const r=await authFetch(server()+'/v16/traces/birth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({creator_id:await ensureIdentity(),creation_id:creationId,payment_id:paymentId})});const j=await r.json();if(!r.ok)throw Error(j.error||'Birth failed');traceId=j.trace_id;",

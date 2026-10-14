@@ -256,6 +256,35 @@ def index():
       },500);
     }else if(n>=80)clearInterval(t);
   },250);
+  // Recovery layer: verify the exact handoff against server records and refresh modal UI.
+  async function reconcile(){
+    if(!id||!pid)return;
+    try{
+      var pr=await fetch('/api/payment/status/'+encodeURIComponent(pid),{cache:'no-store'});
+      var p=await pr.json();
+      if(!pr.ok||p.status!=='PAID'||p.creation_id!==id)return;
+      var n2=0,ui=setInterval(function(){
+        n2++;
+        var root=document.querySelector('[id*="creator"],[class*="creator"],[id*="experience"],[class*="experience"]');
+        if(root){
+          var all=root.querySelectorAll('*');
+          all.forEach(function(el){
+            if(el.children.length>0)return;
+            var t=(el.textContent||'').trim();
+            if(/^CREATOR ID:\\s*[—–-]$/.test(t)){
+              el.textContent='CREATION ID: '+id+'\\nCREATOR ID: '+(localStorage.getItem('penyli_creator_id')||localStorage.getItem('penyli_v56_creator_id')||localStorage.getItem('penyli_v10_creator_id')||'CREATOR ID PENDING');
+            }
+            if(/Creation ID reserved\\. Waiting for payment confirmation\\./i.test(t)||/Creation ID зарезервирован\\. Ждём подтверждения оплаты\\./i.test(t)){
+              el.textContent='PAYMENT CONFIRMED · '+id+' · READY FOR BIRTH';
+            }
+          });
+          clearInterval(ui);
+        }else if(n2>40)clearInterval(ui);
+      },250);
+      window.dispatchEvent(new CustomEvent('penyli:payment-confirmed',{detail:{creation_id:id,payment_id:pid,verified:true}}));
+    }catch(e){}
+  }
+  reconcile();
 })();
 </script>""";
     # Use the real payment record for the existing Creator modal's confirmation step.

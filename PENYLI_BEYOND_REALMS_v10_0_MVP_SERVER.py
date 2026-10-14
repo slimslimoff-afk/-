@@ -236,15 +236,24 @@ def index():
   var q=new URLSearchParams(location.search),id=q.get('creation_id'),pid=q.get('payment_id');
   if(q.get('view')!=='create'||!id||!/^CREATION-[A-F0-9]{16,64}$/i.test(id))return;
   try{
-    localStorage.setItem('penyli_last_creation_id',id);
-    localStorage.setItem('penyli_pending_creation_id',id);
-    localStorage.setItem('penyli_v56_creation',id);
-    if(pid){localStorage.setItem('penyli_v56_payment',pid);localStorage.setItem('penyli_last_payment_id',pid)}
+    // Persist the verified handoff before the creator modal initializes.
+    ['penyli_last_creation_id','penyli_pending_creation_id','penyli_v56_creation','penyli_v10_creation_id','penyli_creation_id'].forEach(function(k){localStorage.setItem(k,id)});
+    if(pid){['penyli_v56_payment','penyli_last_payment_id','penyli_v10_payment','penyli_payment_id'].forEach(function(k){localStorage.setItem(k,pid)})}
+    localStorage.setItem('penyli_payment_confirmed','true');
   }catch(e){}
   var n=0,t=setInterval(function(){
     n++;
     if(typeof window.PENYLI_OPEN_CREATOR_EXPERIENCE==='function'){
-      clearInterval(t);window.PENYLI_OPEN_CREATOR_EXPERIENCE();
+      clearInterval(t);
+      window.PENYLI_OPEN_CREATOR_EXPERIENCE();
+      // Re-apply after modal startup in case its initializer overwrites stale state.
+      setTimeout(function(){
+        try{
+          ['penyli_last_creation_id','penyli_pending_creation_id','penyli_v56_creation','penyli_v10_creation_id','penyli_creation_id'].forEach(function(k){localStorage.setItem(k,id)});
+          if(pid)['penyli_v56_payment','penyli_last_payment_id','penyli_v10_payment','penyli_payment_id'].forEach(function(k){localStorage.setItem(k,pid)});
+          window.dispatchEvent(new CustomEvent('penyli:payment-confirmed',{detail:{creation_id:id,payment_id:pid}}));
+        }catch(e){}
+      },500);
     }else if(n>=80)clearInterval(t);
   },250);
 })();

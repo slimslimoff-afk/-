@@ -989,6 +989,98 @@ def apply_creation_to_realm(creation_id, realm_id=None):
     return dict(row), None
 
 
+
+@app.post("/api/creator/recover")
+def recover_creator_payment_link():
+    """Restore creator ownership only when the caller supplies an exact, internally consistent paid operation."""
+    payload = request.get_json(silent=True) or {}
+    creator_id = (payload.get("creator_id") or "").strip()
+    payment_id = (payload.get("payment_id") or "").strip()
+    creation_id = (payload.get("creation_id") or "").strip()
+    if not creator_id or not payment_id or not creation_id:
+        return jsonify({"error": "CREATOR_PAYMENT_CREATION_IDS_REQUIRED"}), 400
+    if len(creator_id) > 128 or len(payment_id) > 128 or len(creation_id) > 128:
+        return jsonify({"error": "INVALID_IDENTIFIER"}), 400
+
+    con = db()
+    try:
+        row = con.execute("""
+            SELECT p.payment_id, p.status AS payment_status, p.creation_id AS payment_creation_id,
+                   p.creator_id AS existing_creator_id, c.creation_id AS linked_creation_id,
+                   c.payment_id AS creation_payment_id
+            FROM payments p
+            LEFT JOIN creations c ON c.creation_id = ?
+            WHERE p.payment_id = ?
+        """, (creation_id, payment_id)).fetchone()
+        if not row:
+            return jsonify({"error": "PAYMENT_NOT_FOUND"}), 404
+        if row["payment_status"] != "PAID":
+            return jsonify({"error": "PAYMENT_NOT_CONFIRMED"}), 409
+        if row["payment_creation_id"] != creation_id or row["linked_creation_id"] != creation_id or row["creation_payment_id"] != payment_id:
+            return jsonify({"error": "PAYMENT_CREATION_MISMATCH"}), 409
+        existing_creator = row["existing_creator_id"]
+        if existing_creator and existing_creator != creator_id:
+            return jsonify({"error": "CREATOR_ID_CONFLICT", "creator_id_already_assigned": True}), 409
+
+        con.execute("""
+            UPDATE payments SET creator_id = ?
+            WHERE payment_id = ? AND status = 'PAID'
+              AND creation_id = ? AND (creator_id IS NULL OR creator_id = '')
+        """, (creator_id, payment_id, creation_id))
+        con.commit()
+        updated = con.execute(
+            "SELECT creator_id FROM payments WHERE payment_id = ?",
+            (payment_id,)
+        ).fetchone()
+        if not updated or updated["creator_id"] != creator_id:
+            return jsonify({"error": "CREATOR_LINK_NOT_UPDATED"}), 409
+        return jsonify({
+            "status": "CREATOR_LINK_RESTORED",
+            "creator_id": creator_id,
+            "payment_id": payment_id,
+            "creation_id": creation_id,
+            "payment_status": "PAID",
+            "payment_status_changed": False,
+            "creation_id_changed": False
+        }), 200
+    finally:
+        con.close()
+
+
+@app.get("/api/creator/recovery-diagnostics")
+def creator_recovery_diagnostics():
+    creator_id = (request.args.get("creator_id") or "").strip()
+    if not creator_id:
+        return jsonify({"error": "CREATOR_ID_REQUIRED"}), 400
+    con = db()
+    try:
+        matched = con.execute("""
+            SELECT COUNT(*) FROM payments WHERE creator_id = ?
+        """, (creator_id,)).fetchone()[0]
+        unassigned_paid = con.execute("""
+            SELECT COUNT(*) FROM payments p
+            JOIN creations c ON c.payment_id = p.payment_id
+                                AND c.creation_id = p.creation_id
+            WHERE p.status = 'PAID' AND (p.creator_id IS NULL OR p.creator_id = '')
+        """).fetchone()[0]
+        inconsistent = con.execute("""
+            SELECT COUNT(*) FROM payments p
+            LEFT JOIN creations c ON c.payment_id = p.payment_id
+                                 AND c.creation_id = p.creation_id
+            WHERE p.status = 'PAID' AND p.creation_id IS NOT NULL
+              AND c.creation_id IS NULL
+        """).fetchone()[0]
+        return jsonify({
+            "creator_id": creator_id,
+            "payments_linked_to_creator": int(matched),
+            "paid_unassigned_consistent_operations": int(unassigned_paid),
+            "paid_operations_with_creation_mismatch": int(inconsistent),
+            "payment_records_changed": False
+        })
+    finally:
+        con.close()
+
+
 # PENYLI v10.2 API compatibility routes
 @app.post("/v17/creators/register")
 def v17_register_creator():

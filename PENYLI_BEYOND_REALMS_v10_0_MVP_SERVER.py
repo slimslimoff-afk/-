@@ -1047,6 +1047,43 @@ def recover_creator_payment_link():
         con.close()
 
 
+@app.get("/api/payment/diagnostics")
+def payment_diagnostics():
+    """Aggregate-only diagnostics to distinguish an empty/wrong database from missing creator links."""
+    con = db()
+    try:
+        totals = con.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END) AS paid,
+                   SUM(CASE WHEN status != 'PAID' THEN 1 ELSE 0 END) AS not_paid,
+                   SUM(CASE WHEN creation_id IS NOT NULL AND creation_id != '' THEN 1 ELSE 0 END) AS with_creation,
+                   SUM(CASE WHEN creator_id IS NOT NULL AND creator_id != '' THEN 1 ELSE 0 END) AS with_creator
+            FROM payments
+        """).fetchone()
+        providers = con.execute("""
+            SELECT COALESCE(provider, 'unknown') AS provider,
+                   COUNT(*) AS count,
+                   SUM(CASE WHEN status = 'PAID' THEN 1 ELSE 0 END) AS paid
+            FROM payments GROUP BY COALESCE(provider, 'unknown')
+        """).fetchall()
+        creations = con.execute("SELECT COUNT(*) FROM creations").fetchone()[0]
+        mutations = con.execute("SELECT COUNT(*) FROM realm_mutations").fetchone()[0]
+        return jsonify({
+            "database_configured": bool(DB),
+            "payments_total": int(totals["total"] or 0),
+            "payments_paid": int(totals["paid"] or 0),
+            "payments_not_paid": int(totals["not_paid"] or 0),
+            "payments_with_creation_id": int(totals["with_creation"] or 0),
+            "payments_with_creator_id": int(totals["with_creator"] or 0),
+            "creations_total": int(creations or 0),
+            "realm_mutations_total": int(mutations or 0),
+            "providers": [dict(row) for row in providers],
+            "identifiers_or_secrets_exposed": False
+        })
+    finally:
+        con.close()
+
+
 @app.get("/api/creator/recovery-diagnostics")
 def creator_recovery_diagnostics():
     creator_id = (request.args.get("creator_id") or "").strip()

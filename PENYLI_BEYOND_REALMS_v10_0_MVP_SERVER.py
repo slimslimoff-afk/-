@@ -988,6 +988,80 @@ def apply_creation_to_realm(creation_id, realm_id=None):
     con.close()
     return dict(row), None
 
+
+# PENYLI v10.2 API compatibility routes
+@app.post("/v17/creators/register")
+def v17_register_creator():
+    payload = request.get_json(silent=True) or {}
+    creator_id = (payload.get("creator_id") or request.args.get("creator_id") or "").strip()
+    if not creator_id or len(creator_id) > 128:
+        return jsonify({"error": "CREATOR_ID_REQUIRED"}), 400
+    # Register identity only. Do not rewrite payment or creation ownership.
+    con = db()
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS creators (
+                creator_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        timestamp = now()
+        con.execute(
+            "INSERT INTO creators(creator_id, created_at, updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(creator_id) DO UPDATE SET updated_at=excluded.updated_at",
+            (creator_id, timestamp, timestamp)
+        )
+        con.commit()
+        return jsonify({"status": "registered", "creator_id": creator_id}), 200
+    finally:
+        con.close()
+
+
+@app.get("/v21/journey")
+def v21_creator_journey():
+    creator_id = (request.args.get("creator_id") or "").strip()
+    if not creator_id:
+        return jsonify({"error": "CREATOR_ID_REQUIRED"}), 400
+    con = db()
+    try:
+        rows = con.execute("""
+            SELECT p.payment_id, p.status AS payment_status, p.paid_at,
+                   c.creation_id, c.gene_id, c.realm_id, c.created_at AS creation_created_at,
+                   rm.mutation_id, rm.world_version, rm.generation, rm.mutation_hash,
+                   rm.created_at AS mutation_created_at
+            FROM payments p
+            LEFT JOIN creations c ON c.payment_id = p.payment_id
+            LEFT JOIN realm_mutations rm ON rm.creation_id = c.creation_id
+            WHERE p.creator_id = ?
+            ORDER BY p.created_at ASC, rm.world_version ASC
+        """, (creator_id,)).fetchall()
+        journey = []
+        seen = set()
+        for row in rows:
+            item = dict(row)
+            key = item.get("creation_id") or item.get("payment_id")
+            if key in seen:
+                continue
+            seen.add(key)
+            journey.append(item)
+        traces = [x for x in journey if x.get("creation_id")]
+        realm_ids = sorted({x["realm_id"] for x in traces if x.get("realm_id")})
+        versions = [x.get("world_version") for x in traces if x.get("world_version") is not None]
+        return jsonify({
+            "creator_id": creator_id,
+            "traces": len(traces),
+            "connections": 0,
+            "realms": len(realm_ids),
+            "world_version": max(versions) if versions else 0,
+            "creations": traces,
+            "journey": journey,
+            "connections_supported": False
+        })
+    finally:
+        con.close()
+
+
 @app.get("/api/payment/status/<payment_id>")
 def payment_status(payment_id):
     con = db()

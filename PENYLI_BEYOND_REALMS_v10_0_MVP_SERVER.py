@@ -317,6 +317,41 @@ def index():
     )
     if 'id="penyli-creation-handoff"' not in html:
         html = html.replace("</head>", payment_bridge + "</head>", 1)
+
+    # Guaranteed query-parameter handoff: run after the creator app's own scripts
+    # and seed the exact paid IDs before the modal's load handler reads state.
+    final_handoff = r"""<script id="penyli-final-payment-handoff">
+(function(){
+  var q=new URLSearchParams(window.location.search);
+  if(q.get('view')!=='create')return;
+  var cid=q.get('creation_id')||'',pid=q.get('payment_id')||'';
+  if(!/^CREATION-[A-F0-9]{16,64}$/i.test(cid)||!pid)return;
+  try{
+    ['penyli_v56_creation','penyli_pending_creation_id','penyli_last_creation_id','penyli_v10_creation_id','penyli_creation_id'].forEach(function(k){localStorage.setItem(k,cid)});
+    ['penyli_v56_payment','penyli_last_payment_id','penyli_v10_payment','penyli_payment_id'].forEach(function(k){localStorage.setItem(k,pid)});
+  }catch(e){}
+  fetch('/api/payment/status/'+encodeURIComponent(pid),{cache:'no-store'})
+    .then(function(r){return r.json().then(function(j){if(!r.ok)throw Error(j.error||'Payment lookup failed');return j;})})
+    .then(function(j){
+      if(j.status!=='PAID'||j.creation_id!==cid)return;
+      try{localStorage.setItem('penyli_payment_confirmed','true')}catch(e){}
+      window.dispatchEvent(new CustomEvent('penyli:payment-confirmed',{detail:{creation_id:cid,payment_id:pid,verified:true}}));
+      var count=0,t=setInterval(function(){
+        count++;
+        var node=document.getElementById('v55Id');
+        var note=document.getElementById('v55Note');
+        if(node){var creator=(localStorage.getItem('penyli_creator_id')||localStorage.getItem('penyli_v56_creator_id')||'').trim();
+          node.textContent='CREATION ID: '+cid+String.fromCharCode(10)+'CREATOR ID: '+(creator||'PENDING SERVER IDENTITY');
+          if(note)note.textContent='PAYMENT CONFIRMED · '+cid+' · READY FOR BIRTH';
+          var birth=document.getElementById('v55Create');if(birth)birth.disabled=false;
+          clearInterval(t);
+        }else if(count>40)clearInterval(t);
+      },250);
+    }).catch(function(e){console.warn('PENYLI payment handoff verification failed',e);});
+})();
+</script>"""
+    if 'id="penyli-final-payment-handoff"' not in html:
+        html = html.replace("</body>", final_handoff + "</body>", 1)
     return Response(html, mimetype="text/html")
 
 
